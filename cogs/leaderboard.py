@@ -1,10 +1,10 @@
-"""Leaderboard cog: the ``/leaderboard``, ``/score``, ``/weeklyleaderboard`` and
+"""Leaderboard cog: the ``/leaderboard``, ``/weeklyleaderboard`` and
 ``/monthlyleaderboard`` commands.
 
 They all resolve which contest this server should show (a pinned one, or the
 latest official as a fallback) and render results as Discord embeds with medal
-emoji for the top three. ``/leaderboard`` and ``/score`` read the contest's
-cumulative ranking; ``/weeklyleaderboard`` and ``/monthlyleaderboard`` instead
+emoji for the top three. ``/leaderboard`` reads the contest's cumulative
+ranking; ``/weeklyleaderboard`` and ``/monthlyleaderboard`` instead
 tally raw logs over a window (the last 7 days, or the current calendar month) to
 build the rolling/period rankings the API doesn't expose directly.
 
@@ -35,9 +35,9 @@ PAGE_SIZE = 15
 # caps page_size at 100, so this is the largest (and thus fewest-requests) page.
 LOOKUP_PAGE_SIZE = 100
 
-# Safety cap on how many pages /score will scan before giving up. 50 pages of
-# 100 covers 5,000 participants -- far beyond any real contest -- and bounds the
-# worst case so a typo can't trigger an unbounded request loop.
+# Safety cap on how many leaderboard pages a name lookup will scan before giving
+# up. 50 pages of 100 covers 5,000 participants -- far beyond any real contest --
+# and bounds the worst case so a typo can't trigger an unbounded request loop.
 MAX_LOOKUP_PAGES = 50
 
 # The rolling window /weeklyleaderboard tallies over.
@@ -210,7 +210,7 @@ async def _scored_participants(bot: commands.Bot, contest_id: str) -> list[dict]
     Pages the contest's cumulative leaderboard (100 at a time). Because it's
     sorted by score descending, the first non-positive score means everyone
     after it also has zero, so we stop there; a short page ends the scan too.
-    Bounded by ``MAX_LOOKUP_PAGES`` like the ``/score`` scan so a huge contest
+    Bounded by ``MAX_LOOKUP_PAGES`` like the name-lookup scan so a huge contest
     can't trigger an unbounded request loop.
     """
     participants: list[dict] = []
@@ -504,59 +504,6 @@ class Leaderboard(commands.Cog):
                 f"Page {page} · {data.get('total_size', len(entries))} participants{filter_note}"
             )
         )
-        await interaction.followup.send(embed=embed)
-
-    @app_commands.command(
-        name="score",
-        description="Look up a person's score in this server's current contest.",
-    )
-    @app_commands.describe(
-        username="The person's Tadoku display name, exactly as shown on the leaderboard.",
-    )
-    async def score(self, interaction: discord.Interaction, username: str):
-        """Report one participant's rank and score in the resolved contest.
-
-        The person must actually be on the currently selected leaderboard; if no
-        entry matches ``username`` we say so rather than inventing a zero score.
-        """
-        # Scanning the leaderboard is several network calls in the worst case;
-        # defer so Discord doesn't time the interaction out. Public, like
-        # /leaderboard -- a looked-up score is fine for everyone to see.
-        await interaction.response.defer()
-
-        try:
-            contest = await _resolve_contest(self.bot, interaction.guild_id)
-            entry = await _find_leaderboard_entry(self.bot, contest["id"], username)
-        except tadoku.TadokuAPIError:
-            await interaction.followup.send(
-                "❌ Couldn't reach tadoku.app right now. Try again in a moment."
-            )
-            return
-
-        if entry is None:
-            # The "user has to be in the currently selected leaderboard" case:
-            # not found means they aren't participating in this contest.
-            await interaction.followup.send(
-                f"**{username}** isn't on the leaderboard for **{contest['title']}**."
-            )
-            return
-
-        rank = entry["rank"]
-        # Top 3 get a medal; everyone else a plain "#N".
-        marker = MEDALS.get(rank, f"#{rank}")
-        tie = " *(tie)*" if entry.get("is_tie") else ""
-
-        embed = discord.Embed(
-            title=f"🏆 {contest['title']}",
-            # Show the leaderboard's own spelling of the name (which may differ
-            # in case/spacing from what the user typed), plus rank and score.
-            description=(
-                f"**{entry['user_display_name']}**\n"
-                f"{marker}{tie} — {entry['score']:.1f} points"
-            ),
-            color=discord.Color.blurple(),
-        )
-        embed.set_footer(text=f"{contest['contest_start']} – {contest['contest_end']}")
         await interaction.followup.send(embed=embed)
 
     async def _send_period_leaderboard(

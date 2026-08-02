@@ -268,7 +268,7 @@ async def test_language_autocomplete_returns_empty_list_on_api_error(fake_bot):
 
 
 # ---------------------------------------------------------------------------
-# _find_leaderboard_entry (the paging scan behind /score)
+# _find_leaderboard_entry (the paging scan behind /card and /claim)
 # ---------------------------------------------------------------------------
 
 def _full_page(start_rank):
@@ -362,119 +362,6 @@ async def test_find_entry_respects_max_page_cap(fake_bot):
 
     assert entry is None
     assert tadoku_client.get_contest_leaderboard.await_count == leaderboard_cog.MAX_LOOKUP_PAGES
-
-
-# ---------------------------------------------------------------------------
-# /score command
-# ---------------------------------------------------------------------------
-
-async def test_score_defers_before_scanning(fake_bot):
-    tadoku_client.get_contest_leaderboard.side_effect = _pager({0: [_entry(1, "ruby", 177.1)]})
-    cog = leaderboard_cog.Leaderboard(fake_bot)
-    interaction = make_interaction(guild_id=999)
-
-    await cog.score.callback(cog, interaction, username="ruby")
-
-    interaction.response.defer.assert_awaited_once()
-
-
-async def test_score_reports_rank_and_score_for_a_participant(fake_bot):
-    tadoku_client.get_contest_leaderboard.side_effect = _pager(
-        {0: [_entry(1, "ruby", 177.16), _entry(2, "ryun", 89.75)]}
-    )
-    cog = leaderboard_cog.Leaderboard(fake_bot)
-    interaction = make_interaction(guild_id=999)
-
-    await cog.score.callback(cog, interaction, username="ruby")
-
-    embed = interaction.followup.send.await_args.kwargs["embed"]
-    assert embed.title == "🏆 2026 Round 4"
-    assert "ruby" in embed.description
-    assert "🥇" in embed.description  # rank 1 medal
-    assert "177.2" in embed.description  # score, one decimal
-
-
-async def test_score_shows_plain_rank_for_non_top_three(fake_bot):
-    tadoku_client.get_contest_leaderboard.side_effect = _pager(
-        {0: [_entry(7, "midfielder", 12.3)]}
-    )
-    cog = leaderboard_cog.Leaderboard(fake_bot)
-    interaction = make_interaction(guild_id=999)
-
-    await cog.score.callback(cog, interaction, username="midfielder")
-
-    embed = interaction.followup.send.await_args.kwargs["embed"]
-    assert "#7" in embed.description
-
-
-async def test_score_marks_ties(fake_bot):
-    tadoku_client.get_contest_leaderboard.side_effect = _pager(
-        {0: [_entry(1, "ruby", 100.0, is_tie=True)]}
-    )
-    cog = leaderboard_cog.Leaderboard(fake_bot)
-    interaction = make_interaction(guild_id=999)
-
-    await cog.score.callback(cog, interaction, username="ruby")
-
-    embed = interaction.followup.send.await_args.kwargs["embed"]
-    assert "(tie)" in embed.description
-
-
-async def test_score_uses_leaderboard_spelling_of_the_name(fake_bot):
-    tadoku_client.get_contest_leaderboard.side_effect = _pager(
-        {0: [_entry(1, "Ruby ", 100.0)]}
-    )
-    cog = leaderboard_cog.Leaderboard(fake_bot)
-    interaction = make_interaction(guild_id=999)
-
-    await cog.score.callback(cog, interaction, username="ruby")
-
-    embed = interaction.followup.send.await_args.kwargs["embed"]
-    assert "Ruby" in embed.description
-
-
-async def test_score_reports_when_person_not_on_leaderboard(fake_bot):
-    tadoku_client.get_contest_leaderboard.side_effect = _pager(
-        {0: [_entry(1, "ruby", 100.0)]}
-    )
-    cog = leaderboard_cog.Leaderboard(fake_bot)
-    interaction = make_interaction(guild_id=999)
-
-    await cog.score.callback(cog, interaction, username="ghost")
-
-    args, kwargs = interaction.followup.send.await_args
-    assert "embed" not in kwargs
-    assert "ghost" in args[0]
-    assert "2026 Round 4" in args[0]
-
-
-async def test_score_sends_friendly_message_on_api_error(fake_bot):
-    tadoku_client.get_contest_leaderboard.side_effect = tadoku_client.TadokuAPIError("boom")
-    cog = leaderboard_cog.Leaderboard(fake_bot)
-    interaction = make_interaction(guild_id=999)
-
-    await cog.score.callback(cog, interaction, username="ruby")
-
-    args, kwargs = interaction.followup.send.await_args
-    assert "embed" not in kwargs
-    assert "tadoku.app" in args[0]
-
-
-async def test_score_uses_configured_contest_when_set(fake_bot):
-    config_store.set_guild_contest(999, "configured-id", "Configured Contest")
-    tadoku_client.get_contest_leaderboard.side_effect = _pager({0: [_entry(1, "ruby", 100.0)]})
-    cog = leaderboard_cog.Leaderboard(fake_bot)
-    interaction = make_interaction(guild_id=999)
-
-    await cog.score.callback(cog, interaction, username="ruby")
-
-    # Scanned the configured contest, not the latest-official fallback.
-    called_contest_id = tadoku_client.get_contest_leaderboard.await_args.kwargs.get("contest_id")
-    if called_contest_id is None:
-        called_contest_id = tadoku_client.get_contest_leaderboard.await_args.args[1]
-    assert called_contest_id == "configured-id"
-    embed = interaction.followup.send.await_args.kwargs["embed"]
-    assert embed.title == "🏆 Configured Contest"
 
 
 # ---------------------------------------------------------------------------

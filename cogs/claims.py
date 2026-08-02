@@ -13,8 +13,8 @@ Commands:
     member of the same name.
 
 Matching (and uniqueness) is case/whitespace-insensitive, reusing the
-leaderboard cog's ``_normalize_name`` so it agrees with ``/score``. Contest data
-is fetched live from tadoku.app via the leaderboard cog's helpers; only the
+leaderboard cog's ``_normalize_name`` so it agrees with the leaderboard. Contest
+data is fetched live from tadoku.app via the leaderboard cog's helpers; only the
 claim map is persisted (in ``lib.config_store``).
 """
 
@@ -27,7 +27,7 @@ import lib.config_store as config_store
 import lib.tadoku_client as tadoku
 from lib.permissions import is_admin
 
-# Fold names the same way /score does, so claims match the leaderboard.
+# Fold names the same way the leaderboard does, so claims match it.
 _normalize = leaderboard._normalize_name
 
 # Cap how many names /unclaimedlist spells out before an "…and N more" tail, so

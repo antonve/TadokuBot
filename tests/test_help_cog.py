@@ -70,7 +70,7 @@ async def test_help_catalogue_covers_every_registered_command(monkeypatch):
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.default())
     for ext in (
         "cogs.leaderboard", "cogs.admin", "cogs.alerts", "cogs.log_feed",
-        "cogs.claims", "cogs.help_command",
+        "cogs.claims", "cogs.help_command", "cogs.card",
     ):
         await bot.load_extension(ext)
 

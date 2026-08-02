@@ -18,7 +18,7 @@ Anyone can use these.
 | --- | --- |
 | `/tadokubot` | Lists all of the bot's commands (this table). |
 | `/leaderboard [page] [language] [activity]` | Shows this server's configured contest leaderboard. Falls back to the latest official tadoku.app contest if nothing is configured. |
-| `/score username:<name>` | Looks up one person's rank and score in this server's current contest. `username` is their Tadoku display name; the person must be on that leaderboard (otherwise the bot says they aren't participating). |
+| `/card [username:<name>]` | Posts a **stats card** to the channel for everyone to see: the person's avatar, their place and score in this server's current contest, and their contest totals (characters, pages, comic pages, listening hours). With no `username` it shows your own card (you must have `/claim`ed a username first); `username` (their Tadoku display name) shows someone else's. The person must be on the current leaderboard (otherwise the bot says they aren't participating). |
 | `/weeklyleaderboard` | Ranks everyone by points logged in the **last 7 days** of this server's current contest. Tallied from the contest's individual logs (the API's own leaderboard is cumulative), so it's a rolling window ending now. When the shame setting is on (default), it also appends a call-out of everyone who has points in the contest but logged nothing in the last 7 days. |
 | `/monthlyleaderboard [month] [year]` | Like `/weeklyleaderboard`, but ranks points logged in a **calendar month**. With no arguments it shows the current month to date; pass `month` and/or `year` (e.g. `month:June year:2026`) to see a specific past month. Each defaults to the current one. Uses the same shame setting and call-out. |
 | `/current_contest` | Shows which contest this server is currently configured to display. |
@@ -85,7 +85,7 @@ able to post there.
 
 The bot can remember which Discord member is which tadoku.app participant, per server. The mapping
 is two-way unique: **each member claims at most one username, and each username is claimed by at most
-one member** (matching is case- and whitespace-insensitive, like `/score`).
+one member** (matching is case- and whitespace-insensitive, like the leaderboard).
 
 - **`/autoclaim`** (admin) does the bulk work: for every participant in the current contest it looks
   up a Discord member of the same name (username, nickname, or global name) and links them. It only

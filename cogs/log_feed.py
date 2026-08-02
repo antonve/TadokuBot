@@ -95,6 +95,66 @@ def _contest_window(contest: dict) -> tuple[datetime, datetime]:
     return _midnight(contest["contest_start"]), _midnight(contest["contest_end"]) + timedelta(days=1)
 
 
+async def compute_contest_totals(session, user_id: str, contest: dict) -> dict:
+    """Sum a user's logs within ``contest``'s date window into characters / pages /
+    comic pages / listening minutes.
+
+    Buckets each non-deleted log by its unit: "character" -> characters, "comic"
+    ("Comic page") -> comic_pages, "page" ("Page") -> pages, and "minute"
+    ("Minute"/"Dense minute") -> listening minutes. ``comic`` is checked before
+    ``page`` since "Comic page" contains "page". Logs arrive newest-first: any log
+    newer than the contest window is skipped, and the first one older than it ends
+    the walk (everything before it is out of window too). Pages the API by
+    ``total_size``, bounded by ``CONTEST_LOG_MAX_PAGES``. Shared by the log-feed
+    card and the ``/card`` command.
+    """
+    start, end = _contest_window(contest)
+    characters = pages = comic_pages = minutes = 0.0
+
+    def _totals():
+        return {"characters": characters, "pages": pages,
+                "comic_pages": comic_pages, "minutes": minutes}
+
+    for page in range(CONTEST_LOG_MAX_PAGES):
+        data = await tadoku.list_user_logs(session, user_id, page=page, page_size=LOG_PAGE_SIZE)
+        logs = data.get("logs", [])
+        for log in logs:
+            ts = leaderboard._parse_timestamp(log["created_at"])
+            # Newest-first: logs after the contest aren't counted (but older ones
+            # may still lie inside the window, so keep scanning)...
+            if ts >= end:
+                continue
+            # ...and the first log before the window ends the walk entirely.
+            if ts < start:
+                return _totals()
+            if log.get("deleted"):
+                continue
+            unit = (log.get("unit_name") or "").lower()
+            amount = log.get("amount") or 0
+            if "character" in unit:
+                characters += amount
+            elif "comic" in unit:  # "Comic page" -- before the plain "page" check
+                comic_pages += amount
+            elif "page" in unit:
+                pages += amount
+            elif "minute" in unit:
+                minutes += amount
+        # Stop at a short page or once we've covered the reported total.
+        if len(logs) < LOG_PAGE_SIZE or (page + 1) * LOG_PAGE_SIZE >= data.get("total_size", 0):
+            break
+    return _totals()
+
+
+def format_standing(entry: dict, contest: dict) -> str:
+    """The card subtitle for a leaderboard ``entry``: place, score and contest.
+
+    Renders e.g. ``"#5 · 320.5 pts in 2026 Round 4"`` (with a "(tie)" marker when
+    the rank is shared). Shared by the log-feed card and the ``/card`` command.
+    """
+    tie = " (tie)" if entry.get("is_tie") else ""
+    return f"#{entry['rank']}{tie} · {_format_points(entry['score'])} pts in {contest['title']}"
+
+
 def _activity_name(log: dict) -> str:
     activity = log.get("activity")
     return activity.get("name", "") if isinstance(activity, dict) else (activity or "")
@@ -108,8 +168,8 @@ def _language_name(log: dict) -> str:
 def _claimer_id(claims: dict[str, str], name: str) -> Optional[int]:
     """Return the Discord id that claimed ``name`` (via /claim), or ``None``.
 
-    Folds names the same way /score and /claim do, so a leaderboard spelling like
-    "Ruby " matches a claim stored as "ruby".
+    Folds names the same way /claim does, so a leaderboard spelling like "Ruby "
+    matches a claim stored as "ruby".
     """
     target = leaderboard._normalize_name(name)
     for uid, claimed in claims.items():
@@ -369,14 +429,7 @@ class LogFeed(commands.Cog):
         except tadoku.TadokuAPIError:
             _log.warning("Log feed: leaderboard lookup for %r failed", display_name)
             entry = None
-        if entry is None:
-            standing = ""
-        else:
-            tie = " (tie)" if entry.get("is_tie") else ""
-            standing = (
-                f"#{entry['rank']}{tie} · {_format_points(entry['score'])} pts "
-                f"in {contest['title']}"
-            )
+        standing = "" if entry is None else format_standing(entry, contest)
         cache[key] = standing
         return standing
 
@@ -420,55 +473,8 @@ class LogFeed(commands.Cog):
         return stats
 
     async def _compute_contest_totals(self, user_id: str, contest: dict) -> dict:
-        """Sum a user's logs within ``contest``'s date window into characters /
-        pages / comic pages / listening minutes.
-
-        Buckets each non-deleted log by its unit: "character" -> characters,
-        "comic" ("Comic page") -> comic_pages, "page" ("Page") -> pages, and
-        "minute" ("Minute"/"Dense minute") -> listening minutes. ``comic`` is
-        checked before ``page`` since "Comic page" contains "page". Logs arrive
-        newest-first: any log newer than the contest window is skipped, and the
-        first one older than it ends the walk (everything before it is out of
-        window too). Pages the API by ``total_size``, bounded by
-        ``CONTEST_LOG_MAX_PAGES``.
-        """
-        start, end = _contest_window(contest)
-        characters = pages = comic_pages = minutes = 0.0
-
-        def _totals():
-            return {"characters": characters, "pages": pages,
-                    "comic_pages": comic_pages, "minutes": minutes}
-
-        for page in range(CONTEST_LOG_MAX_PAGES):
-            data = await tadoku.list_user_logs(
-                self.bot.session, user_id, page=page, page_size=LOG_PAGE_SIZE
-            )
-            logs = data.get("logs", [])
-            for log in logs:
-                ts = leaderboard._parse_timestamp(log["created_at"])
-                # Newest-first: logs after the contest aren't counted (but older
-                # ones may still lie inside the window, so keep scanning)...
-                if ts >= end:
-                    continue
-                # ...and the first log before the window ends the walk entirely.
-                if ts < start:
-                    return _totals()
-                if log.get("deleted"):
-                    continue
-                unit = (log.get("unit_name") or "").lower()
-                amount = log.get("amount") or 0
-                if "character" in unit:
-                    characters += amount
-                elif "comic" in unit:  # "Comic page" -- before the plain "page" check
-                    comic_pages += amount
-                elif "page" in unit:
-                    pages += amount
-                elif "minute" in unit:
-                    minutes += amount
-            # Stop at a short page or once we've covered the reported total.
-            if len(logs) < LOG_PAGE_SIZE or (page + 1) * LOG_PAGE_SIZE >= data.get("total_size", 0):
-                break
-        return _totals()
+        """Instance wrapper around ``compute_contest_totals`` (uses ``self.bot``)."""
+        return await compute_contest_totals(self.bot.session, user_id, contest)
 
     async def _avatar_bytes_for_id(
         self, uid: int, cache: dict[int, Optional[bytes]]

@@ -27,6 +27,11 @@ from PIL import Image, ImageChops, ImageDraw, ImageFont
 SCALE = 2
 WIDTH = 1040
 HEIGHT = 430
+# Height of the log-less "stats card" (the /card command): the layout ends after
+# the stat row, with a bottom margin mirroring the top -- so 160 (stat row top) +
+# 108 (panel height) + 44 (top margin) = 312. Keeps the same header + stat row as
+# the full card, just without the callout and the extra breathing room below it.
+STATS_ONLY_HEIGHT = 160 + 108 + 44
 
 # Outer margin used to align everything: the avatar's left edge, the content's
 # right edge, and the top/bottom breathing room all key off it.
@@ -210,32 +215,37 @@ def _render(
     subtitle = _oneline(subtitle)
     this_log = _oneline(this_log)
     title = _oneline(title)
+    # The callout (material title + log line) is drawn only when there's a log to
+    # show; the /card command renders a log-less "stats card" that ends after the
+    # stat row, so the canvas is shorter and no poster column is drawn.
+    show_callout = bool(this_log or title)
+    H = HEIGHT if show_callout else STATS_ONLY_HEIGHT
     # A decodable poster widens the card by a right-hand column; anything else
     # (no bytes, or undecodable bytes) renders the original content-only card.
     poster = (
         _poster_image(poster_bytes, POSTER_W * S, POSTER_H * S, 14 * S)
-        if poster_bytes
+        if poster_bytes and show_callout
         else None
     )
     card_w = WIDTH + (POSTER_PANEL if poster is not None else 0)
-    img = Image.new("RGBA", (card_w * S, HEIGHT * S), (0, 0, 0, 0))
+    img = Image.new("RGBA", (card_w * S, H * S), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    outer_box = (0, 0, card_w * S - 1, HEIGHT * S - 1)
+    outer_box = (0, 0, card_w * S - 1, H * S - 1)
     outer_radius = 28 * S
 
     # Rounded dark ground. The border is drawn last, after every layer has been
     # clipped to this same silhouette, so the accent cannot cover it.
     draw.rounded_rectangle(outer_box, radius=outer_radius, fill=BG)
     # Purple accent stripe down the left edge.
-    draw.rounded_rectangle((0, 0, 10 * S, HEIGHT * S - 1), radius=10 * S, fill=ACCENT)
-    draw.rectangle((6 * S, 0, 12 * S, HEIGHT * S - 1), fill=ACCENT)
+    draw.rounded_rectangle((0, 0, 10 * S, H * S - 1), radius=10 * S, fill=ACCENT)
+    draw.rectangle((6 * S, 0, 12 * S, H * S - 1), fill=ACCENT)
 
     # Avatar, vertically centred on the card.
     av_size = 210 * S
     avatar = _circular_avatar(avatar_bytes, av_size)
     av_x = MARGIN * S
-    av_y = (HEIGHT * S - av_size) // 2
+    av_y = (H * S - av_size) // 2
     img.paste(avatar, (av_x, av_y), avatar)
     # Hairline ring around it.
     draw.ellipse((av_x, av_y, av_x + av_size, av_y + av_size), outline=HAIRLINE, width=S)
@@ -270,26 +280,27 @@ def _render(
 
     # "This log" callout with its own accent stripe. When there's a material
     # title it sits on top (quoted) with the log line beneath; otherwise the log
-    # line is centred on its own.
-    call_y0 = row_y + panel_h + 18 * S
-    call_h = 100 * S
-    call_box = (content_x, call_y0, right, call_y0 + call_h)
-    draw.rounded_rectangle(call_box, radius=12 * S, fill=CALLOUT_BG, outline=HAIRLINE, width=S)
-    draw.rounded_rectangle((content_x, call_y0, content_x + 6 * S, call_y0 + call_h), radius=3 * S, fill=ACCENT)
+    # line is centred on its own. Skipped entirely for the log-less stats card.
+    if show_callout:
+        call_y0 = row_y + panel_h + 18 * S
+        call_h = 100 * S
+        call_box = (content_x, call_y0, right, call_y0 + call_h)
+        draw.rounded_rectangle(call_box, radius=12 * S, fill=CALLOUT_BG, outline=HAIRLINE, width=S)
+        draw.rounded_rectangle((content_x, call_y0, content_x + 6 * S, call_y0 + call_h), radius=3 * S, fill=ACCENT)
 
-    text_x = content_x + 22 * S
-    text_w = right - text_x - 18 * S
-    if title:
-        title_font = _font(30 * S)
-        log_font = _font(24 * S, bold=True)
-        draw.text((text_x, call_y0 + 18 * S), _truncate(draw, f"「{title}」", title_font, text_w),
-                  font=title_font, fill=INK)
-        draw.text((text_x, call_y0 + 58 * S), _truncate(draw, this_log, log_font, text_w),
-                  font=log_font, fill=INK_SOFT)
-    else:
-        log_font = _font(28 * S, bold=True)
-        draw.text((text_x, call_y0 + 36 * S), _truncate(draw, this_log, log_font, text_w),
-                  font=log_font, fill=INK)
+        text_x = content_x + 22 * S
+        text_w = right - text_x - 18 * S
+        if title:
+            title_font = _font(30 * S)
+            log_font = _font(24 * S, bold=True)
+            draw.text((text_x, call_y0 + 18 * S), _truncate(draw, f"「{title}」", title_font, text_w),
+                      font=title_font, fill=INK)
+            draw.text((text_x, call_y0 + 58 * S), _truncate(draw, this_log, log_font, text_w),
+                      font=log_font, fill=INK_SOFT)
+        else:
+            log_font = _font(28 * S, bold=True)
+            draw.text((text_x, call_y0 + 36 * S), _truncate(draw, this_log, log_font, text_w),
+                      font=log_font, fill=INK)
 
     # Material poster in the right-hand column, with a hairline frame.
     if poster is not None:
@@ -316,7 +327,7 @@ def _render(
     )
 
     # Downsample for antialiasing, flatten onto transparency-friendly RGBA PNG.
-    img = img.resize((card_w, HEIGHT), Image.LANCZOS)
+    img = img.resize((card_w, H), Image.LANCZOS)
     buffer = io.BytesIO()
     img.save(buffer, format="PNG")
     return buffer.getvalue()
@@ -337,9 +348,11 @@ async def render_card(
 ) -> bytes:
     """Render the profile card off the event loop; returns PNG bytes.
 
-    When ``poster_bytes`` is supplied (and decodable) the material's cover is
-    drawn in a column on the right and the card widens accordingly; otherwise the
-    original content-only card is returned unchanged.
+    With no ``this_log``/``title`` (the ``/card`` command) the card is a log-less
+    "stats card": header + stat row only, on a shorter canvas with no callout and
+    no poster. Otherwise the full log card is drawn -- and when ``poster_bytes`` is
+    supplied (and decodable) the material's cover is drawn in a column on the right
+    and the card widens accordingly.
     """
     return await asyncio.to_thread(
         _render, display_name, subtitle, avatar_bytes, characters, pages, comic_pages,
