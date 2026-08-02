@@ -702,6 +702,25 @@ async def test_compute_contest_totals_pages_until_total_reached():
     assert tadoku_client.list_user_logs.await_count == 2
 
 
+async def test_compute_window_totals_open_ended_end_counts_through_latest():
+    # end=None -> no upper bound: every log at/after start counts, and the walk
+    # still stops at the first log before start.
+    from datetime import datetime, timezone
+    start = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    tadoku_client.list_user_logs.return_value = {
+        "logs": [
+            _ulog("Page", 5, created_at="2026-09-01T00:00:00Z"),   # well after start -> counts
+            _ulog("Page", 10, created_at="2026-07-15T00:00:00Z"),  # in window -> counts
+            _ulog("Page", 999, created_at="2026-06-01T00:00:00Z"),  # before start -> stop
+        ],
+        "total_size": 3,
+    }
+
+    stats = await log_feed.compute_window_totals(AsyncMock(), "user-1", start, None)
+
+    assert stats == {"characters": 0, "pages": 15, "comic_pages": 0, "minutes": 0}
+
+
 # ---------------------------------------------------------------------------
 # /log on|off|status
 # ---------------------------------------------------------------------------

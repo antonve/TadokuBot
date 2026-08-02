@@ -29,6 +29,8 @@ GENERAL_COMMANDS = [
     ("/tadokutag", "How to tag a log so its cover / link shows on the card."),
     ("/leaderboard", "This server's contest leaderboard."),
     ("/card", "Post a stats card for yourself or someone else in the contest."),
+    ("/weeklycard", "A stats card scoped to the last 7 days."),
+    ("/monthlycard", "A stats card scoped to a calendar month."),
     ("/weeklyleaderboard", "Ranking of points logged in the last 7 days."),
     ("/monthlyleaderboard", "Ranking of points logged in a calendar month."),
     ("/current_contest", "Which contest this server is currently set to."),

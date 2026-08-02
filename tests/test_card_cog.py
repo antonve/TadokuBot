@@ -5,13 +5,17 @@ the cog callback is driven directly with a fake interaction -- no live Discord, 
 real image work. The card image itself is covered in test_profile_card.py.
 """
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import discord
 import pytest
+from discord import app_commands
 
 import cogs.card as card
+import cogs.leaderboard as leaderboard
+import cogs.log_feed as log_feed
 import lib.config_store as config_store
 import lib.profile_card as profile_card
 import lib.tadoku_client as tadoku_client
@@ -184,3 +188,91 @@ async def test_card_no_arg_without_a_claim_is_ephemeral_and_hits_no_network():
     assert "/claim" in args[0]
     tadoku_client.get_contest_leaderboard.assert_not_awaited()
     profile_card.render_card.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# /weeklycard + /monthlycard (period-scoped cards)
+# ---------------------------------------------------------------------------
+
+async def test_weeklycard_shows_period_rank_and_window_stats(monkeypatch):
+    tadoku_client.get_contest_leaderboard.return_value = {
+        "entries": [_entry(9, "ruby", 500.0, user_id="uuid-ruby")], "total_size": 1,
+    }
+    # This week: ruby has 88 pts, someone else 100 -> ruby is #2.
+    monkeypatch.setattr(leaderboard, "_tally_scores_since", AsyncMock(return_value={
+        "uuid-ruby": ["ruby", 88.0], "other": ["max", 100.0],
+    }))
+    monkeypatch.setattr(log_feed, "compute_window_totals", AsyncMock(return_value={
+        "characters": 12000, "pages": 3, "comic_pages": 0, "minutes": 45,
+    }))
+    cog = card.Card(_bot())
+    interaction = make_interaction(guild_id=999)
+
+    await cog.weeklycard.callback(cog, interaction, username="ruby")
+
+    kw = _kwargs()
+    assert kw["subtitle"] == "#2 · 88 pts · last 7 days"
+    assert kw["characters"] == 12000 and kw["listening_hours"] == 45 / 60
+    assert isinstance(interaction.followup.send.await_args.kwargs["file"], discord.File)
+
+
+async def test_weeklycard_reports_when_nothing_logged_this_week(monkeypatch):
+    tadoku_client.get_contest_leaderboard.return_value = {
+        "entries": [_entry(9, "ruby", 500.0, user_id="uuid-ruby")], "total_size": 1,
+    }
+    # ruby isn't in this week's tally at all.
+    monkeypatch.setattr(leaderboard, "_tally_scores_since",
+                        AsyncMock(return_value={"other": ["max", 100.0]}))
+    cog = card.Card(_bot())
+    interaction = make_interaction(guild_id=999)
+
+    await cog.weeklycard.callback(cog, interaction, username="ruby")
+
+    profile_card.render_card.assert_not_awaited()
+    args, kwargs = interaction.followup.send.await_args
+    assert "file" not in kwargs
+    assert "logged nothing" in args[0] and "last 7 days" in args[0]
+
+
+async def test_monthlycard_scopes_to_the_selected_month_of_the_current_year(monkeypatch):
+    tadoku_client.get_contest_leaderboard.return_value = {
+        "entries": [_entry(1, "ruby", 500.0, user_id="uuid-ruby")], "total_size": 1,
+    }
+    tally = AsyncMock(return_value={"uuid-ruby": ["ruby", 140.0]})
+    monkeypatch.setattr(leaderboard, "_tally_scores_since", tally)
+    monkeypatch.setattr(log_feed, "compute_window_totals", AsyncMock(return_value={
+        "characters": 5000, "pages": 0, "comic_pages": 0, "minutes": 0,
+    }))
+    cog = card.Card(_bot())
+    interaction = make_interaction(guild_id=999)
+    year = datetime.now(timezone.utc).year
+
+    await cog.monthlycard.callback(
+        cog, interaction, month=app_commands.Choice(name="July", value=7), username="ruby"
+    )
+
+    # Tally was scoped to July of the current year (cutoff positional, until kwarg).
+    cutoff = tally.await_args.args[2]
+    until = tally.await_args.kwargs["until"]
+    assert cutoff == datetime(year, 7, 1, tzinfo=timezone.utc)
+    assert until == datetime(year, 8, 1, tzinfo=timezone.utc)
+    assert _kwargs()["subtitle"] == f"#1 · 140 pts · July {year}"
+
+
+async def test_monthlycard_defaults_to_the_current_month(monkeypatch):
+    tadoku_client.get_contest_leaderboard.return_value = {
+        "entries": [_entry(1, "ruby", 500.0, user_id="uuid-ruby")], "total_size": 1,
+    }
+    tally = AsyncMock(return_value={"uuid-ruby": ["ruby", 10.0]})
+    monkeypatch.setattr(leaderboard, "_tally_scores_since", tally)
+    monkeypatch.setattr(log_feed, "compute_window_totals", AsyncMock(return_value={
+        "characters": 0, "pages": 0, "comic_pages": 0, "minutes": 0,
+    }))
+    cog = card.Card(_bot())
+    interaction = make_interaction(guild_id=999)
+    now = datetime.now(timezone.utc)
+
+    await cog.monthlycard.callback(cog, interaction, month=None, username="ruby")
+
+    assert tally.await_args.args[2] == datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+    assert now.strftime("%B %Y") in _kwargs()["subtitle"]

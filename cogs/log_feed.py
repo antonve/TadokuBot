@@ -95,20 +95,20 @@ def _contest_window(contest: dict) -> tuple[datetime, datetime]:
     return _midnight(contest["contest_start"]), _midnight(contest["contest_end"]) + timedelta(days=1)
 
 
-async def compute_contest_totals(session, user_id: str, contest: dict) -> dict:
-    """Sum a user's logs within ``contest``'s date window into characters / pages /
-    comic pages / listening minutes.
+async def compute_window_totals(session, user_id: str, start, end) -> dict:
+    """Sum a user's logs in the half-open window ``[start, end)`` into characters /
+    pages / comic pages / listening minutes.
 
     Buckets each non-deleted log by its unit: "character" -> characters, "comic"
     ("Comic page") -> comic_pages, "page" ("Page") -> pages, and "minute"
     ("Minute"/"Dense minute") -> listening minutes. ``comic`` is checked before
     ``page`` since "Comic page" contains "page". Logs arrive newest-first: any log
-    newer than the contest window is skipped, and the first one older than it ends
-    the walk (everything before it is out of window too). Pages the API by
-    ``total_size``, bounded by ``CONTEST_LOG_MAX_PAGES``. Shared by the log-feed
-    card and the ``/card`` command.
+    at/after ``end`` is skipped (a later window bound), and the first one before
+    ``start`` ends the walk (everything before it is out of window too). ``end`` may
+    be ``None`` for an open-ended window (up to now). Pages the API by
+    ``total_size``, bounded by ``CONTEST_LOG_MAX_PAGES``. Shared by the contest
+    card and the weekly/monthly cards.
     """
-    start, end = _contest_window(contest)
     characters = pages = comic_pages = minutes = 0.0
 
     def _totals():
@@ -120,9 +120,9 @@ async def compute_contest_totals(session, user_id: str, contest: dict) -> dict:
         logs = data.get("logs", [])
         for log in logs:
             ts = leaderboard._parse_timestamp(log["created_at"])
-            # Newest-first: logs after the contest aren't counted (but older ones
-            # may still lie inside the window, so keep scanning)...
-            if ts >= end:
+            # Newest-first: logs after the window aren't counted (but older ones
+            # may still lie inside it, so keep scanning)...
+            if end is not None and ts >= end:
                 continue
             # ...and the first log before the window ends the walk entirely.
             if ts < start:
@@ -143,6 +143,12 @@ async def compute_contest_totals(session, user_id: str, contest: dict) -> dict:
         if len(logs) < LOG_PAGE_SIZE or (page + 1) * LOG_PAGE_SIZE >= data.get("total_size", 0):
             break
     return _totals()
+
+
+async def compute_contest_totals(session, user_id: str, contest: dict) -> dict:
+    """Sum a user's logs within ``contest``'s date window (see ``compute_window_totals``)."""
+    start, end = _contest_window(contest)
+    return await compute_window_totals(session, user_id, start, end)
 
 
 def format_standing(entry: dict, contest: dict) -> str:
