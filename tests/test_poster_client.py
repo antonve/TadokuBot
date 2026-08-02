@@ -100,6 +100,9 @@ def test_clean_title_keeps_original_when_cleaning_would_empty_it():
     (None, None),
     ([], None),
     (["book"], "book"),
+    (["ln"], "ln"),
+    (["ln", "book"], "ln"),  # ln wins -> AniList NOVEL search
+    (["manga", "ln"], "manga"),  # manga still beats ln
     (["fiction", "game"], "game"),
     (["vn"], "vn"),
     (["vn", "game"], "vn"),  # vn wins so it stays VNDB-only, no Steam hop
@@ -234,15 +237,37 @@ async def test_mal_prefers_large_but_falls_back_to_medium(monkeypatch):
     assert session.calls[1][1] == "https://m/med.jpg"
 
 
-async def test_google_books_requires_key(monkeypatch):
-    session = _FakeSession([])
-    assert await poster_client.fetch_poster(session, ["book"], "雪国") is None
-    assert session.calls == []
+async def test_book_anilist_hit_parses_cover_and_downloads():
+    # A ``book`` tag tries AniList first; a hit means Google Books is never touched.
+    session = _FakeSession([
+        _FakeResponse(json_data={"data": {"Media": {
+            "coverImage": {"medium": "https://al/m.jpg", "large": "https://al/l.jpg",
+                           "extraLarge": "https://al/xl.jpg"}}}}),
+        _FakeResponse(body=b"ANILISTCOVER"),
+    ])
+    out = await poster_client.fetch_poster(session, ["book"], "薬屋のひとりごと Vol. 1")
+    assert out == b"ANILISTCOVER"
+    method, url, kwargs = session.calls[0]
+    assert method == "POST" and url == "https://graphql.anilist.co"
+    assert kwargs["json"]["variables"]["search"] == "薬屋のひとりごと"  # cleaned of "Vol. 1"
+    assert "format: NOVEL" not in kwargs["json"]["query"]  # plain book search
+    assert session.calls[1][1] == "https://al/xl.jpg"  # prefers extraLarge
 
 
-async def test_google_books_parses_thumbnail_and_upgrades_to_https(monkeypatch):
+async def test_ln_anilist_search_narrows_to_novel_format():
+    session = _FakeSession([
+        _FakeResponse(json_data={"data": {"Media": {"coverImage": {"large": "https://al/l.jpg"}}}}),
+        _FakeResponse(body=b"LNCOVER"),
+    ])
+    out = await poster_client.fetch_poster(session, ["ln"], "オーバーロード")
+    assert out == b"LNCOVER"
+    assert "format: NOVEL" in session.calls[0][2]["json"]["query"]
+
+
+async def test_book_falls_back_to_google_when_anilist_misses(monkeypatch):
     monkeypatch.setenv("GOOGLE_BOOKS_API_KEY", "gkey")
     session = _FakeSession([
+        _FakeResponse(json_data={"data": {"Media": None}}),  # AniList miss
         _FakeResponse(json_data={"items": [
             {"volumeInfo": {"imageLinks": {"thumbnail": "http://books.google.com/c.jpg"}}}
         ]}),
@@ -250,7 +275,17 @@ async def test_google_books_parses_thumbnail_and_upgrades_to_https(monkeypatch):
     ])
     out = await poster_client.fetch_poster(session, ["book"], "雪国")
     assert out == b"BOOKCOVER"
-    assert session.calls[1][1] == "https://books.google.com/c.jpg"  # http -> https
+    assert session.calls[0][1] == "https://graphql.anilist.co"  # AniList tried first
+    assert session.calls[1][1].startswith("https://www.googleapis.com/books")
+    assert session.calls[2][1] == "https://books.google.com/c.jpg"  # http -> https
+
+
+async def test_book_returns_none_when_anilist_misses_and_no_google_key(monkeypatch):
+    # AniList is keyless so it's always tried; Google Books is skipped without a key.
+    session = _FakeSession([_FakeResponse(json_data={"data": {"Media": None}})])
+    assert await poster_client.fetch_poster(session, ["book"], "雪国") is None
+    assert len(session.calls) == 1
+    assert session.calls[0][1] == "https://graphql.anilist.co"
 
 
 async def test_tmdb_requires_key(monkeypatch):

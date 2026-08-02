@@ -44,7 +44,8 @@ MEDIA_TAGS = [
     ("game", "Game cover (VNDB, then Steam)"),
     ("anime", "Anime cover (MyAnimeList)"),
     ("manga", "Manga cover (MyAnimeList)"),
-    ("book", "Book cover (Google Books)"),
+    ("ln", "Light-novel cover (AniList, then Google Books)"),
+    ("book", "Book cover (AniList, then Google Books)"),
     ("tv / movie / show", "Live-action film or TV cover (TMDB)"),
     ("youtube", "Posts the video link from the log's description under the card"),
 ]

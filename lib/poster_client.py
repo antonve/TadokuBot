@@ -10,7 +10,10 @@ This module maps a log to a poster image, by tag:
                    Steam covers general games (Persona, Ys, …) that aren't VNs
   * anime       -> MyAnimeList API v2 (needs ``MAL_CLIENT_ID``)
   * manga       -> MyAnimeList API v2 (needs ``MAL_CLIENT_ID``)
-  * book        -> Google Books (needs ``GOOGLE_BOOKS_API_KEY`` for quota)
+  * ln          -> AniList GraphQL (light novels, keyless), then Google Books
+  * book        -> AniList GraphQL (keyless), then Google Books (needs
+                   ``GOOGLE_BOOKS_API_KEY`` for quota). AniList carries Japanese
+                   light-novel covers Google Books often lacks, so it's tried first
   * tv/movie/show (live-action) -> TMDB (needs ``TMDB_API_KEY``); anime is routed
                    to MyAnimeList above, so only non-anime screen media lands here
 
@@ -59,6 +62,10 @@ def _category(tags: Optional[list]) -> Optional[str]:
         return "anime"
     if "manga" in have:
         return "manga"
+    # ``ln`` and ``book`` both try AniList first; ``ln`` narrows AniList to novels,
+    # so a log tagged both prefers that (more precise) light-novel search.
+    if "ln" in have:
+        return "ln"
     if "book" in have:
         return "book"
     # Live-action screen media: TV shows and films. ``anime`` is caught above, so
@@ -144,8 +151,14 @@ async def _image_url(
         return await _vndb_image_url(session, title) or await _steam_image_url(session, title)
     if category in ("anime", "manga"):
         return await _mal_image_url(session, category, title)
+    if category == "ln":
+        # Light novels: AniList's NOVEL search, then Google Books.
+        return await _anilist_image_url(session, title, novel_only=True) \
+            or await _google_books_image_url(session, title)
     if category == "book":
-        return await _google_books_image_url(session, title)
+        # Books: AniList (best manga-or-novel match), then Google Books.
+        return await _anilist_image_url(session, title, novel_only=False) \
+            or await _google_books_image_url(session, title)
     if category == "screen":
         return await _tmdb_image_url(session, title)
     return None
@@ -255,6 +268,35 @@ async def _steam_image_url(
             if resp.status == 200:
                 return candidate
     return None
+
+
+async def _anilist_image_url(
+    session: aiohttp.ClientSession, title: str, *, novel_only: bool
+) -> Optional[str]:
+    """Look up a light-novel / book cover on AniList's GraphQL API (no key needed).
+
+    AniList indexes light novels under ``type: MANGA``; ``novel_only`` narrows the
+    search to ``format: NOVEL`` (the ``ln`` tag), while a plain ``book`` search
+    takes the best manga-or-novel match. Returns the largest ``coverImage`` URL, or
+    ``None`` on a miss / error (so the caller can fall back to Google Books). A
+    "not found" comes back as either a 200 with ``Media`` null or a 404 -- both
+    yield ``None`` here.
+    """
+    fmt = ", format: NOVEL" if novel_only else ""
+    query = (
+        f"query ($search: String) {{ Media(search: $search, type: MANGA{fmt}) "
+        f"{{ coverImage {{ extraLarge large medium }} }} }}"
+    )
+    body = {"query": query, "variables": {"search": title}}
+    async with session.post(
+        "https://graphql.anilist.co", json=body, timeout=_TIMEOUT
+    ) as resp:
+        if resp.status != 200:
+            return None
+        data = await resp.json()
+    media = (data.get("data") or {}).get("Media") or {}
+    cover = media.get("coverImage") or {}
+    return cover.get("extraLarge") or cover.get("large") or cover.get("medium")
 
 
 async def _google_books_image_url(
