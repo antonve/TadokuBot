@@ -53,6 +53,28 @@ async def test_render_card_clips_accent_to_outer_rounded_corners():
     assert img.getpixel((7, profile_card.HEIGHT // 2))[:3] == profile_card.ACCENT
 
 
+async def test_render_card_clips_callout_accent_to_its_rounded_border():
+    data = await profile_card.render_card(
+        display_name="ruby",
+        this_log="#anime  ·  Listening  ·  0  ·  +16 pts",
+        title="ヘルモード19~20",
+    )
+    img = _valid_png(data).convert("RGB")
+
+    # The callout starts at (290, 286). Its accent should be clipped away at
+    # the rounded top-left corner, remain purple down the straight edge, and
+    # leave the hairline border visible above it.
+    assert img.getpixel((292, 286)) == profile_card.BG
+    assert all(
+        abs(actual - expected) <= 3
+        for actual, expected in zip(img.getpixel((292, 336)), profile_card.ACCENT)
+    )
+    assert all(
+        abs(actual - expected) <= 4
+        for actual, expected in zip(img.getpixel((300, 286)), profile_card.HAIRLINE)
+    )
+
+
 async def test_render_card_accepts_a_real_avatar_image():
     # A tiny real PNG as the avatar; the renderer should crop/mask it without error.
     buf = io.BytesIO()

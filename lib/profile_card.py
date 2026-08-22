@@ -195,6 +195,28 @@ def _draw_stat(draw: ImageDraw.ImageDraw, box, label: str, value: str) -> None:
     draw.text((x0 + 18 * SCALE, y0 + 48 * SCALE), value, font=_font(28 * SCALE, bold=True), fill=INK)
 
 
+def _clip_to_rounded_border(
+    image: Image.Image,
+    box,
+    radius: int,
+    outline,
+    width: int,
+) -> None:
+    """Clip ``image`` to ``box`` and redraw its rounded border on top.
+
+    Accent fills deliberately extend underneath a container's border so there
+    is no gap along its straight left edge. Clipping the finished layer to the
+    same rounded silhouette, then restoring the outline, keeps that fill inside
+    both rounded corners without letting it cover the border.
+    """
+    mask = Image.new("L", image.size, 0)
+    ImageDraw.Draw(mask).rounded_rectangle(box, radius=radius, fill=255)
+    image.putalpha(ImageChops.multiply(image.getchannel("A"), mask))
+    ImageDraw.Draw(image).rounded_rectangle(
+        box, radius=radius, outline=outline, width=width
+    )
+
+
 def _render(
     display_name: str,
     subtitle: str,
@@ -284,9 +306,21 @@ def _render(
     if show_callout:
         call_y0 = row_y + panel_h + 18 * S
         call_h = 100 * S
-        call_box = (content_x, call_y0, right, call_y0 + call_h)
-        draw.rounded_rectangle(call_box, radius=12 * S, fill=CALLOUT_BG, outline=HAIRLINE, width=S)
-        draw.rounded_rectangle((content_x, call_y0, content_x + 6 * S, call_y0 + call_h), radius=3 * S, fill=ACCENT)
+
+        # Compose the panel on its own layer so the same clip-and-outline
+        # treatment used by the outer card can constrain this accent too.
+        call_w = right - content_x + 1
+        call_layer = Image.new("RGBA", (call_w, call_h + 1), (0, 0, 0, 0))
+        call_draw = ImageDraw.Draw(call_layer)
+        local_box = (0, 0, call_w - 1, call_h)
+        call_draw.rounded_rectangle(local_box, radius=12 * S, fill=CALLOUT_BG)
+        call_draw.rounded_rectangle(
+            (0, 0, 6 * S, call_h), radius=3 * S, fill=ACCENT
+        )
+        _clip_to_rounded_border(
+            call_layer, local_box, radius=12 * S, outline=HAIRLINE, width=S
+        )
+        img.alpha_composite(call_layer, (content_x, call_y0))
 
         text_x = content_x + 22 * S
         text_w = right - text_x - 18 * S
@@ -312,18 +346,10 @@ def _render(
             radius=14 * S, outline=HAIRLINE, width=S,
         )
 
-    # Clip the completed composition to one shared outer mask. In particular,
-    # this removes the square caps from the accent's fill rectangle at the
-    # top-left and bottom-left corners.
-    outer_mask = Image.new("L", img.size, 0)
-    ImageDraw.Draw(outer_mask).rounded_rectangle(
-        outer_box, radius=outer_radius, fill=255
-    )
-    img.putalpha(ImageChops.multiply(img.getchannel("A"), outer_mask))
-
-    # Restore a crisp border on top of the clipped artwork.
-    ImageDraw.Draw(img).rounded_rectangle(
-        outer_box, radius=outer_radius, outline=HAIRLINE, width=S
+    # Clip every layer to the outer silhouette and restore its border. The same
+    # reusable treatment also keeps the callout accent inside its own corners.
+    _clip_to_rounded_border(
+        img, outer_box, radius=outer_radius, outline=HAIRLINE, width=S
     )
 
     # Downsample for antialiasing, flatten onto transparency-friendly RGBA PNG.
