@@ -47,7 +47,7 @@ MEDIA_TAGS = [
     ("anime", "Anime cover (MyAnimeList)"),
     ("manga", "Manga cover (MyAnimeList)"),
     ("ln", "Light-novel cover (AniList, then Google Books)"),
-    ("book", "Book cover (AniList, then Google Books)"),
+    ("book / audiobook", "Book cover (AniList, then Google Books)"),
     ("tv / movie / show", "Live-action film or TV cover (TMDB)"),
     ("youtube", "Posts the video link from the log's description under the card"),
 ]

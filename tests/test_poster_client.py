@@ -100,8 +100,10 @@ def test_clean_title_keeps_original_when_cleaning_would_empty_it():
     (None, None),
     ([], None),
     (["book"], "book"),
+    (["audiobook"], "book"),  # an audiobook is a book read aloud -> book lookup
     (["ln"], "ln"),
     (["ln", "book"], "ln"),  # ln wins -> AniList NOVEL search
+    (["ln", "audiobook"], "ln"),  # ln still wins -> more precise novel search
     (["manga", "ln"], "manga"),  # manga still beats ln
     (["fiction", "game"], "game"),
     (["vn"], "vn"),
@@ -252,6 +254,22 @@ async def test_book_anilist_hit_parses_cover_and_downloads():
     assert kwargs["json"]["variables"]["search"] == "薬屋のひとりごと"  # cleaned of "Vol. 1"
     assert "format: NOVEL" not in kwargs["json"]["query"]  # plain book search
     assert session.calls[1][1] == "https://al/xl.jpg"  # prefers extraLarge
+
+
+async def test_audiobook_uses_the_same_book_lookup():
+    # An ``audiobook`` tag flows exactly like ``book``: AniList (plain search),
+    # then download; Google Books is only a fallback (untouched on a hit).
+    session = _FakeSession([
+        _FakeResponse(json_data={"data": {"Media": {
+            "coverImage": {"large": "https://al/l.jpg"}}}}),
+        _FakeResponse(body=b"AUDIOBOOKCOVER"),
+    ])
+    out = await poster_client.fetch_poster(session, ["audiobook"], "薬屋のひとりごと Vol. 1")
+    assert out == b"AUDIOBOOKCOVER"
+    method, url, kwargs = session.calls[0]
+    assert method == "POST" and url == "https://graphql.anilist.co"
+    assert kwargs["json"]["variables"]["search"] == "薬屋のひとりごと"  # cleaned of "Vol. 1"
+    assert "format: NOVEL" not in kwargs["json"]["query"]  # plain book search
 
 
 async def test_ln_anilist_search_narrows_to_novel_format():

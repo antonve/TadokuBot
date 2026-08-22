@@ -14,6 +14,8 @@ This module maps a log to a poster image, by tag:
   * book        -> AniList GraphQL (keyless), then Google Books (needs
                    ``GOOGLE_BOOKS_API_KEY`` for quota). AniList carries Japanese
                    light-novel covers Google Books often lacks, so it's tried first
+  * audiobook   -> same lookup as ``book`` (a book read aloud): AniList, then
+                   Google Books
   * tv/movie/show (live-action) -> TMDB (needs ``TMDB_API_KEY``); anime is routed
                    to MyAnimeList above, so only non-anime screen media lands here
 
@@ -66,7 +68,10 @@ def _category(tags: Optional[list]) -> Optional[str]:
     # so a log tagged both prefers that (more precise) light-novel search.
     if "ln" in have:
         return "ln"
-    if "book" in have:
+    # An audiobook is a book read aloud -- route it through the same cover lookup
+    # as ``book`` (AniList, then Google Books). ``ln`` is checked first, so an
+    # audiobook of a light novel still gets the more precise novel search.
+    if have & {"book", "audiobook"}:
         return "book"
     # Live-action screen media: TV shows and films. ``anime`` is caught above, so
     # a log tagged both (e.g. an anime that aired on TV) stays on MyAnimeList.
