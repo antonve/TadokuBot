@@ -78,6 +78,45 @@ def _format_points(score) -> str:
     return f"{score:.1f}".rstrip("0").rstrip(".")
 
 
+def _format_minutes(minutes: float) -> str:
+    """Render a duration with a singular/plural minute label."""
+    value = _format_points(minutes)
+    label = "minute" if value == "1" else "minutes"
+    return f"{value} {label}"
+
+
+def _format_tracking(log: dict) -> str:
+    """Render every tracked value in a log.
+
+    Legacy logs carry ``amount`` + ``unit_name`` (for example ``30 Minute``).
+    Tadoku's time-based tracker instead carries ``duration_seconds`` and leaves
+    the unit empty. A Listening log may legally contain both minute forms; show
+    only the larger value (preferring duration on a tie) so one listening session
+    is not presented twice. Other activities preserve both values because their
+    amount and duration describe different measurements.
+    """
+    values = []
+    unit = (log.get("unit_name") or "").strip()
+    amount = log.get("amount") or 0
+    duration_seconds = log.get("duration_seconds")
+    duration_minutes = duration_seconds / 60 if duration_seconds is not None else None
+
+    if (
+        _activity_name(log).strip().casefold() == "listening"
+        and "minute" in unit.casefold()
+        and duration_minutes is not None
+    ):
+        if duration_minutes >= amount:
+            return _format_minutes(duration_minutes)
+        return f"{_format_points(amount)} {unit}"
+
+    if unit:
+        values.append(f"{_format_points(amount)} {unit}")
+    if duration_seconds is not None:
+        values.append(_format_minutes(duration_minutes))
+    return " · ".join(values)
+
+
 def _contest_window(contest: dict) -> tuple[datetime, datetime]:
     """Return the ``[start, end)`` UTC datetimes spanning ``contest``'s days.
 
@@ -99,15 +138,19 @@ async def compute_window_totals(session, user_id: str, start, end) -> dict:
     """Sum a user's logs in the half-open window ``[start, end)`` into characters /
     pages / comic pages / listening minutes.
 
-    Buckets each non-deleted log by its unit: "character" -> characters, "comic"
-    ("Comic page") -> comic_pages, "page" ("Page") -> pages, and "minute"
-    ("Minute"/"Dense minute") -> listening minutes. ``comic`` is checked before
-    ``page`` since "Comic page" contains "page". Logs arrive newest-first: any log
-    at/after ``end`` is skipped (a later window bound), and the first one before
-    ``start`` ends the walk (everything before it is out of window too). ``end`` may
-    be ``None`` for an open-ended window (up to now). Pages the API by
-    ``total_size``, bounded by ``CONTEST_LOG_MAX_PAGES``. Shared by the contest
-    card and the weekly/monthly cards.
+    Buckets each non-deleted log by its tracking data. Amount-based logs use their
+    unit: "character" -> characters, "comic" ("Comic page") -> comic_pages,
+    "page" ("Page") -> pages, and Listening "minute" ("Minute"/"Dense minute")
+    -> listening minutes. Newer time-tracked Listening logs instead expose
+    ``duration_seconds`` with no meaningful amount/unit, which is converted to
+    minutes. If a Listening log contains both forms, duration wins so the same
+    session is not counted twice. ``comic`` is checked before ``page`` since
+    "Comic page" contains "page". Logs arrive newest-first: any log at/after
+    ``end`` is skipped (a later window bound), and the first one before ``start``
+    ends the walk (everything before it is out of window too). ``end`` may be
+    ``None`` for an open-ended window (up to now). Pages the API by ``total_size``,
+    bounded by ``CONTEST_LOG_MAX_PAGES``. Shared by the contest card and the
+    weekly/monthly cards.
     """
     characters = pages = comic_pages = minutes = 0.0
 
@@ -131,13 +174,19 @@ async def compute_window_totals(session, user_id: str, start, end) -> dict:
                 continue
             unit = (log.get("unit_name") or "").lower()
             amount = log.get("amount") or 0
-            if "character" in unit:
+            activity = _activity_name(log).strip().casefold()
+            duration_seconds = log.get("duration_seconds")
+            if activity == "listening" and duration_seconds is not None:
+                minutes += duration_seconds / 60
+            elif "character" in unit:
                 characters += amount
             elif "comic" in unit:  # "Comic page" -- before the plain "page" check
                 comic_pages += amount
             elif "page" in unit:
                 pages += amount
-            elif "minute" in unit:
+            elif "minute" in unit and activity in ("", "listening"):
+                # Missing activity keeps compatibility with older API payloads;
+                # an explicit Speaking/Study minute must not inflate Listening.
                 minutes += amount
         # Stop at a short page or once we've covered the reported total.
         if len(logs) < LOG_PAGE_SIZE or (page + 1) * LOG_PAGE_SIZE >= data.get("total_size", 0):
@@ -221,13 +270,11 @@ def _format_tags(log: dict) -> str:
 
 def _this_log_line(log: dict) -> str:
     """The one-line "what they just logged" for the profile card's callout: the
-    logger's tags, then activity, amount + unit, and points (no language -- it
-    lives off the card)."""
+    logger's tags, then activity, tracked amount and/or duration, and points (no
+    language -- it lives off the card)."""
     activity = _activity_name(log)
-    amount = _format_points(log.get("amount", 0))
-    unit = log.get("unit_name", "")
     points = _format_points(log.get("score", 0))
-    what = f"{amount} {unit}".strip()
+    what = _format_tracking(log)
     tags = _format_tags(log)
     parts = [p for p in (tags, activity, what) if p]
     parts.append(f"+{points} pts")
@@ -243,8 +290,6 @@ def _format_log_embed(log: dict, avatar_url: Optional[str] = None) -> discord.Em
     """
     activity = _activity_name(log)
     emoji = _ACTIVITY_EMOJI.get(activity, "📝")
-    amount = _format_points(log.get("amount", 0))
-    unit = log.get("unit_name", "")
     language = _language_name(log)
     name = (log.get("user_display_name") or "Someone").strip()
     points = _format_points(log.get("score", 0))
@@ -261,7 +306,7 @@ def _format_log_embed(log: dict, avatar_url: Optional[str] = None) -> discord.Em
     if description:
         embed.description = f"「{description}」"
 
-    embed.add_field(name="Amount", value=f"{amount} {unit}".strip() or "—", inline=True)
+    embed.add_field(name="Amount", value=_format_tracking(log) or "—", inline=True)
     if language:
         embed.add_field(name="Language", value=language, inline=True)
     embed.add_field(name="Points", value=f"+{points}", inline=True)

@@ -47,11 +47,13 @@ def patched(monkeypatch):
 
 
 def _log(created_at, name="ruby", score=10, deleted=False, activity="Reading",
-         amount=5, unit="Page", language="Japanese", description=None, user_id=None, tags=None):
+         amount=5, unit="Page", language="Japanese", description=None, user_id=None, tags=None,
+         duration_seconds=None):
     return {
         "created_at": created_at, "user_display_name": name, "score": score, "deleted": deleted,
         "activity": activity, "amount": amount, "unit_name": unit,
         "language": language, "description": description, "user_id": user_id, "tags": tags,
+        "duration_seconds": duration_seconds,
     }
 
 
@@ -119,6 +121,54 @@ def test_format_log_embed_drops_trailing_zero_on_points():
     assert _fields(log_feed._format_log_embed(_log(CUTOFF, score=3.0)))["Points"] == "+3"
 
 
+def test_format_log_embed_displays_time_tracked_duration():
+    embed = log_feed._format_log_embed(
+        _log(CUTOFF, activity="Listening", amount=0, unit="", duration_seconds=5_490)
+    )
+
+    assert _fields(embed)["Amount"] == "91.5 minutes"
+
+
+def test_format_tracking_uses_singular_minute_for_one_minute():
+    value = log_feed._format_tracking(
+        _log(CUTOFF, activity="Listening", amount=0, unit="", duration_seconds=60)
+    )
+
+    assert value == "1 minute"
+
+
+def test_format_tracking_listening_keeps_larger_duration_only():
+    value = log_feed._format_tracking(
+        _log(CUTOFF, activity="Listening", amount=30, unit="Minute", duration_seconds=3_600)
+    )
+
+    assert value == "60 minutes"
+
+
+def test_format_tracking_listening_keeps_larger_amount_only():
+    value = log_feed._format_tracking(
+        _log(CUTOFF, activity="Listening", amount=90, unit="Minute", duration_seconds=3_600)
+    )
+
+    assert value == "90 Minute"
+
+
+def test_format_tracking_listening_tie_prefers_duration():
+    value = log_feed._format_tracking(
+        _log(CUTOFF, activity="Listening", amount=60, unit="Minute", duration_seconds=3_600)
+    )
+
+    assert value == "60 minutes"
+
+
+def test_format_tracking_reading_preserves_amount_and_duration():
+    value = log_feed._format_tracking(
+        _log(CUTOFF, activity="Reading", amount=40, unit="Page", duration_seconds=5_400)
+    )
+
+    assert value == "40 Page · 90 minutes"
+
+
 def test_format_log_embed_activity_emoji():
     assert log_feed._format_log_embed(_log(CUTOFF, activity="Reading")).title.startswith("📖")
     assert log_feed._format_log_embed(_log(CUTOFF, activity="Listening")).title.startswith("🎧")
@@ -158,6 +208,14 @@ def test_this_log_line_without_tags_is_unchanged():
                                         score=30, tags=None))
     assert line.startswith("Listening")
     assert "#" not in line
+
+
+def test_this_log_line_displays_duration_without_empty_amount():
+    line = log_feed._this_log_line(
+        _log(CUTOFF, activity="Listening", amount=0, unit="", duration_seconds=1_800)
+    )
+
+    assert line == "Listening  ·  30 minutes  ·  +10 pts"
 
 
 # ---------------------------------------------------------------------------
@@ -621,8 +679,10 @@ async def test_poll_falls_back_to_embed_when_card_render_raises(monkeypatch):
 IN_WINDOW = "2026-07-05T20:00:00Z"
 
 
-def _ulog(unit, amount, deleted=False, created_at=IN_WINDOW):
-    return {"unit_name": unit, "amount": amount, "deleted": deleted, "created_at": created_at}
+def _ulog(unit, amount, deleted=False, created_at=IN_WINDOW, *, activity=None,
+          duration_seconds=None):
+    return {"unit_name": unit, "amount": amount, "deleted": deleted, "created_at": created_at,
+            "activity": activity, "duration_seconds": duration_seconds}
 
 
 async def test_compute_contest_totals_sums_by_unit_and_skips_deleted():
@@ -643,6 +703,26 @@ async def test_compute_contest_totals_sums_by_unit_and_skips_deleted():
     stats = await cog._compute_contest_totals("user-1", CONTEST)
 
     assert stats == {"characters": 1000, "pages": 10, "comic_pages": 5, "minutes": 90}
+
+
+async def test_compute_contest_totals_combines_legacy_and_time_tracked_listening():
+    cog = log_feed.LogFeed(SimpleNamespace(session=AsyncMock()))
+    tadoku_client.list_user_logs.return_value = {
+        "logs": [
+            _ulog("Minute", 30, activity="Listening"),
+            _ulog("", 0, activity="Listening", duration_seconds=5_400),
+            # If both are present, duration is the source of truth for this log.
+            _ulog("Minute", 999, activity="Listening", duration_seconds=1_800),
+            # Other activities' time/minute tracking does not belong in Listening.
+            _ulog("", 0, activity="Reading", duration_seconds=3_600),
+            _ulog("Minute", 45, activity="Study"),
+        ],
+        "total_size": 5,
+    }
+
+    stats = await cog._compute_contest_totals("user-1", CONTEST)
+
+    assert stats == {"characters": 0, "pages": 0, "comic_pages": 0, "minutes": 150}
 
 
 async def test_compute_contest_totals_stops_before_contest_start():

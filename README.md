@@ -63,8 +63,9 @@ can't send to.
 
 `/log on channel:#somewhere` turns on a live feed of the server's current contest: every **1
 minute** the bot checks tadoku.app for new logs and posts each one — who logged it, what they
-logged (activity, amount, title, language), and the points — to the channel as an embed **card**,
-one per log, colour-coded by activity.
+logged (activity, amount or tracked duration, title, language), and the points — to the channel as
+an embed **card**, one per log, colour-coded by activity. Listening totals combine legacy
+minute-unit logs with Tadoku's newer time-tracked listening sessions.
 
 If the logger has linked their Discord account with [`/claim`](#discord--tadoku-matching), the log
 instead posts as a rendered **profile card image** (dark-themed): their Discord avatar, their

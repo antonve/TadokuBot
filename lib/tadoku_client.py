@@ -233,8 +233,8 @@ async def list_user_logs(
     Unlike ``list_contest_logs`` this is not scoped to a contest, so paging
     through it yields a user's entire immersion history -- what the log feed sums
     into lifetime characters/pages/listening for a claimed member's card. Each
-    log carries ``amount``, ``unit_name`` and an ``activity``/``language`` object,
-    plus ``deleted`` and ``created_at``.
+    log carries ``amount``, ``unit_name``, optional ``duration_seconds``, and an
+    ``activity``/``language`` object, plus ``deleted`` and ``created_at``.
 
     Returns the raw envelope ``{"logs": [...], "total_size": N}`` (unlike the
     contest-scoped helper, callers need ``total_size`` to know when to stop
