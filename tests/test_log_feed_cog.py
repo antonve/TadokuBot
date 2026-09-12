@@ -477,7 +477,8 @@ async def test_poll_card_draws_the_material_title_on_the_card():
     assert isinstance(_sent(channel)["file"], discord.File)
 
 
-async def test_poll_card_fetches_and_passes_poster_for_tagged_log(monkeypatch):
+@pytest.mark.parametrize("log_id", [None, "log-ruby-1"])
+async def test_poll_card_fetches_and_passes_poster_for_tagged_log(monkeypatch, log_id):
     channel = _channel(cid=555)
     bot = _bot_with_channel(channel)
     bot.get_user = lambda uid: _user_with_avatar() if uid == 111 else None
@@ -485,6 +486,8 @@ async def test_poll_card_fetches_and_passes_poster_for_tagged_log(monkeypatch):
     config_store.set_claim(999, 111, "ruby")
     log = _log("2026-07-05T21:00:00Z", name="ruby", user_id="u", description="Summer Pockets")
     log["tags"] = ["fiction", "game"]
+    if log_id is not None:
+        log["id"] = log_id
     tadoku_client.list_contest_logs.side_effect = _pager({0: [log]})
     tadoku_client.list_user_logs.return_value = {"logs": [], "total_size": 0}
     fetch = AsyncMock(return_value=b"POSTERBYTES")
@@ -497,6 +500,7 @@ async def test_poll_card_fetches_and_passes_poster_for_tagged_log(monkeypatch):
     fetch.assert_awaited_once()
     assert fetch.await_args.args[1] == ["fiction", "game"]
     assert fetch.await_args.args[2] == "Summer Pockets"
+    assert fetch.await_args.kwargs == {"log_id": log_id}
     assert profile_card.render_card.await_args.kwargs["poster_bytes"] == b"POSTERBYTES"
 
 
