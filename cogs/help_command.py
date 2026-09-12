@@ -103,6 +103,10 @@ def build_tag_embed() -> discord.Embed:
         name="Notes",
         value=(
             "• Covers appear on the **profile card** — link your account first with `/claim`.\n"
+            "• Use the material's title in the description; manga and book covers must match its title and media format.\n"
+            "• Uncertain matches or conflicting tags like **manga + ln** may mean no cover.\n"
+            "• **ln + book** and **manga + book** are valid; the more specific tag sets the format.\n"
+            "• **audiobook** logs use the underlying book's cover.\n"
             "• For a **youtube** log, paste the video URL into the log's description.\n"
             "• No matching tag just means a plain card (no cover)."
         ),

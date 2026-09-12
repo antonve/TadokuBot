@@ -495,7 +495,8 @@ class LogFeed(commands.Cog):
         """
         try:
             return await poster_client.fetch_poster(
-                self.bot.session, log.get("tags"), log.get("description") or "", cache
+                self.bot.session, log.get("tags"), log.get("description") or "", cache,
+                log_id=log.get("id"),
             )
         except Exception:  # noqa: BLE001 -- a poster is optional; never fail the card
             _log.warning("Log feed: poster lookup failed for %r", log.get("description"))

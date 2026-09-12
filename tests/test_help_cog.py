@@ -55,6 +55,12 @@ async def test_tadokutag_replies_with_tag_guide_embed(fake_bot):
     assert "vn" in body and "anime" in body and "youtube" in body
     assert "TMDB" in body and "VNDB" in body
     assert "/claim" in body
+    notes = next(f.value for f in kwargs["embed"].fields if f.name == "Notes")
+    assert "title and media format" in notes
+    assert "conflicting tags like **manga + ln**" in notes
+    assert "**ln + book** and **manga + book** are valid" in notes
+    assert "**audiobook** logs use the underlying book's cover" in notes
+    assert len(notes) <= 1024  # Discord's per-field limit.
 
 
 def test_admin_commands_are_the_manage_server_ones():
